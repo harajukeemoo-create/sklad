@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Консолидация Сборок</title>
-  <!-- Подключаем библиотеку сканера, теперь она будет работать без ограничений -->
+  <!-- Подключаем библиотеку сканера -->
   <script src="https://unpkg.com"></script>
   <style>
     body { font-family: Arial, sans-serif; margin: 15px; background: #f4f6f9; color: #333; font-size: 16px; }
@@ -21,7 +21,7 @@
     .stats-box { background: #e8f0fe; padding: 15px; border-radius: 6px; margin: 15px 0; text-align: center; }
     .stats-val { font-size: 26px; font-weight: bold; color: #1a73e8; margin-top: 5px; }
     .loader { display: none; text-align: center; color: #666; margin-top: 10px; font-style: italic; }
-    #reader { width: 100%; max-width: 400px; margin: 10px auto; border-radius: 8px; overflow: hidden; display: none; background: #000; }
+    #reader { width: 100%; max-width: 400px; margin: 10px auto; border-radius: 8px; overflow: hidden; display: none; background: #000; height: 250px; }
   </style>
 </head>
 <body>
@@ -65,52 +65,38 @@
     <h3>Успешно сохранено!</h3>
     <div class="stats-box">
       <div>Сэкономлено площади за сегодня:</div>
-      <div class="stats-val"><span id="statToday">0</span> м²</div>
+      <div class="stats-val"><span id="statToday">Обновлено</span></div>
     </div>
     <div class="stats-box">
-      <div>Сэкономлено за все время:</div>
-      <div class="stats-val"><span id="statTotal">0</span> м²</div>
+      <div>Статус:</div>
+      <div class="stats-val" style="font-size: 18px; color: #34a853;">Данные улетели в таблицу!</div>
     </div>
     <button class="btn" onclick="resetForm()">Скомплектовать новый</button>
   </div>
 
   <script>
-    // СЮДА ВСТАВЬТЕ ВАШУ ССЫЛКУ ИЗ ШАГА 1 (сохраните кавычки!)
+    // ⚠️ ВАЖНО: ЗАМЕНИТЕ ЭТУ ССЫЛКУ НА ВАШУ ИЗ GOOGLE APPS SCRIPT (как в прошлый раз)
     const GOOGLE_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbzu6k8g8nHbXK3S0hxA0Pgj15DMwChDUPTdN-RTaGRyF3Dq-sPA9EMBjSvHj2D9avk9Tg/exec";
 
     let payload = { barcode: '', fromLocs: '', toLocs: '' };
     let html5QrcodeScanner = null;
 
     function startScanner() {
+      // Показываем блок для камеры
       document.getElementById('reader').style.display = 'block';
       document.getElementById('startCamBtn').style.display = 'none';
 
-      Html5Qrcode.getCameras().then(cameras => {
-        if (cameras && cameras.length > 0) {
-          let cameraId = cameras[0].id;
-          for (let i = 0; i < cameras.length; i++) {
-            let label = cameras[i].label.toLowerCase();
-            if (label.indexOf('back') !== -1 || label.indexOf('rear') !== -1 || label.indexOf('основная') !== -1) {
-              cameraId = cameras[i].id;
-              break;
-            }
-          }
-
-          html5QrcodeScanner = new Html5Qrcode("reader");
-          html5QrcodeScanner.start(
-            cameraId, 
-            { fps: 15, qrbox: { width: 260, height: 160 } },
-            onScanSuccess
-          ).catch(err => {
-            alert("Ошибка камеры: " + err);
-            stopScanner();
-          });
-        } else {
-          alert("Камеры не найдены.");
-          stopScanner();
-        }
-      }).catch(err => {
-        alert("Нет доступа к камере. Откройте сайт в Chrome/Safari. Ошибка: " + err);
+      // Инициализируем сканер напрямую в блоке reader
+      html5QrcodeScanner = new Html5Qrcode("reader");
+      
+      // Прямая команда: запустить ЗАДНЮЮ камеру (environment) БЕЗ предварительных опросов
+      html5QrcodeScanner.start(
+        { facingMode: "environment" }, 
+        { fps: 15, qrbox: { width: 280, height: 160 } },
+        onScanSuccess,
+        onScanError
+      ).catch(err => {
+        alert("Ошибка прямого доступа к камере: " + err + "\n\nПроверьте, что ссылка открыта в самом браузере Chrome/Safari, а не внутри мессенджера.");
         stopScanner();
       });
     }
@@ -119,6 +105,11 @@
       document.getElementById('barcodeInput').value = decodedText;
       stopScanner();
       goToStep2();
+    }
+
+    function onScanError(err) {
+      // Сюда сыплются технические промахи кадров, игнорируем их, чтобы не спамить ошибками
+      console.log(err);
     }
 
     function stopScanner() {
@@ -166,25 +157,19 @@
       document.getElementById('submitBtn').disabled = true;
       document.getElementById('loadingText').style.display = 'block';
 
-      // Отправляем данные на наш сервер Google Sheets через современный метод fetch
       fetch(GOOGLE_SCRIPT_URL, {
         method: 'POST',
-        mode: 'no-cors', // Позволяет обойти защиту от перекрестных запросов
+        mode: 'no-cors',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
       })
       .then(() => {
-        // Из-за режима no-cors мы не можем прочитать точные цифры ответа напрямую в целях безопасности,
-        // поэтому выводим сообщение об успешном сохранении в таблицу.
-        document.getElementById('statToday').innerText = "Обновлено";
-        document.getElementById('statTotal').innerText = "В таблице";
-        
         document.getElementById('submitBtn').disabled = false;
         document.getElementById('loadingText').style.display = 'none';
         changeScreen('step3', 'step4');
       })
       .catch(err => {
-        alert("Ошибка сети при сохранении: " + err);
+        alert("Ошибка сети: " + err);
         document.getElementById('submitBtn').disabled = false;
         document.getElementById('loadingText').style.display = 'none';
       });
