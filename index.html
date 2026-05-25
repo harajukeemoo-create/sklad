@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Консолидация Сборок</title>
+  <!-- Подключаем библиотеку сканера, теперь она будет работать без ограничений -->
+  <script src="https://unpkg.com"></script>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 15px; background: #f4f6f9; color: #333; font-size: 16px; }
+    .screen { display: none; background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+    .active { display: block; }
+    h3 { margin-top: 0; color: #1a73e8; }
+    input[type="text"] { width: 100%; padding: 12px; margin: 10px 0; box-sizing: border-box; border: 1px solid #ccc; border-radius: 4px; font-size: 16px; }
+    .btn { background: #1a73e8; color: white; border: none; padding: 14px; width: 100%; border-radius: 4px; font-size: 16px; cursor: pointer; margin-top: 10px; text-align: center; width: 100%; box-sizing: border-box; }
+    .btn-green { background: #34a853; }
+    .btn-orange { background: #f2994a; margin-bottom: 10px; }
+    .checkbox-group { margin: 15px 0; }
+    .checkbox-item { display: flex; align-items: center; margin-bottom: 15px; padding: 10px; background: #f8f9fa; border-radius: 4px; user-select: none; }
+    .checkbox-item input { width: 24px; height: 24px; margin-right: 12px; cursor: pointer; }
+    .stats-box { background: #e8f0fe; padding: 15px; border-radius: 6px; margin: 15px 0; text-align: center; }
+    .stats-val { font-size: 26px; font-weight: bold; color: #1a73e8; margin-top: 5px; }
+    .loader { display: none; text-align: center; color: #666; margin-top: 10px; font-style: italic; }
+    #reader { width: 100%; max-width: 400px; margin: 10px auto; border-radius: 8px; overflow: hidden; display: none; background: #000; }
+  </style>
+</head>
+<body>
+
+  <!-- ШАГ 1: Ввод/Сканирование ШК -->
+  <div id="step1" class="screen active">
+    <h3>Шаг 1: Сканирование заказа</h3>
+    <button id="startCamBtn" class="btn btn-orange" onclick="startScanner()">📷 Включить видео-сканер</button>
+    <div id="reader"></div>
+    <input type="text" id="barcodeInput" placeholder="Или введите ШК вручную" autofocus>
+    <button class="btn" onclick="goToStep2()">Далее</button>
+  </div>
+
+  <!-- ШАГ 2: Откуда перемещение -->
+  <div id="step2" class="screen">
+    <h3>Шаг 2: Откуда перемещение?</h3>
+    <div class="checkbox-group" id="fromGroup">
+      <label class="checkbox-item"><input type="checkbox" value="Паллет"> Паллет (0.98 м²)</label>
+      <label class="checkbox-item"><input type="checkbox" value="Платформа"> Платформа (1.1 м²)</label>
+      <label class="checkbox-item"><input type="checkbox" value="Боковая тележка"> Боковая тележка (1.6 м²)</label>
+      <label class="checkbox-item"><input type="checkbox" value="Корзинка"> Корзинка (0.32 м²)</label>
+    </div>
+    <button class="btn" onclick="goToStep3()">Далее</button>
+  </div>
+
+  <!-- ШАГ 3: Куда переместить -->
+  <div id="step3" class="screen">
+    <h3>Шаг 3: Куда разместить?</h3>
+    <div class="checkbox-group" id="toGroup">
+      <label class="checkbox-item"><input type="checkbox" value="Паллет"> Паллет</label>
+      <label class="checkbox-item"><input type="checkbox" value="Вертикальный стеллаж"> Вертикальный стеллаж</label>
+      <label class="checkbox-item"><input type="checkbox" value="Платформа"> Платформа</label>
+      <label class="checkbox-item"><input type="checkbox" value="Боковая тележка"> Боковая тележка</label>
+    </div>
+    <button id="submitBtn" class="btn btn-green" onclick="submitData()">Сохранить итог</button>
+    <div id="loadingText" class="loader">Сохранение в таблицу...</div>
+  </div>
+
+  <!-- ШАГ 4: Итоги -->
+  <div id="step4" class="screen">
+    <h3>Успешно сохранено!</h3>
+    <div class="stats-box">
+      <div>Сэкономлено площади за сегодня:</div>
+      <div class="stats-val"><span id="statToday">0</span> м²</div>
+    </div>
+    <div class="stats-box">
+      <div>Сэкономлено за все время:</div>
+      <div class="stats-val"><span id="statTotal">0</span> м²</div>
+    </div>
+    <button class="btn" onclick="resetForm()">Скомплектовать новый</button>
+  </div>
+
+  <script>
+    // СЮДА ВСТАВЬТЕ ВАШУ ССЫЛКУ ИЗ ШАГА 1 (сохраните кавычки!)
+    const GOOGLE_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbzu6k8g8nHbXK3S0hxA0Pgj15DMwChDUPTdN-RTaGRyF3Dq-sPA9EMBjSvHj2D9avk9Tg/exec";
+
+    let payload = { barcode: '', fromLocs: '', toLocs: '' };
+    let html5QrcodeScanner = null;
+
+    function startScanner() {
+      document.getElementById('reader').style.display = 'block';
+      document.getElementById('startCamBtn').style.display = 'none';
+
+      Html5Qrcode.getCameras().then(cameras => {
+        if (cameras && cameras.length > 0) {
+          let cameraId = cameras[0].id;
+          for (let i = 0; i < cameras.length; i++) {
+            let label = cameras[i].label.toLowerCase();
+            if (label.indexOf('back') !== -1 || label.indexOf('rear') !== -1 || label.indexOf('основная') !== -1) {
+              cameraId = cameras[i].id;
+              break;
+            }
+          }
+
+          html5QrcodeScanner = new Html5Qrcode("reader");
+          html5QrcodeScanner.start(
+            cameraId, 
+            { fps: 15, qrbox: { width: 260, height: 160 } },
+            onScanSuccess
+          ).catch(err => {
+            alert("Ошибка камеры: " + err);
+            stopScanner();
+          });
+        } else {
+          alert("Камеры не найдены.");
+          stopScanner();
+        }
+      }).catch(err => {
+        alert("Нет доступа к камере. Откройте сайт в Chrome/Safari. Ошибка: " + err);
+        stopScanner();
+      });
+    }
+
+    function onScanSuccess(decodedText) {
+      document.getElementById('barcodeInput').value = decodedText;
+      stopScanner();
+      goToStep2();
+    }
+
+    function stopScanner() {
+      if (html5QrcodeScanner) {
+        html5QrcodeScanner.stop().then(() => {
+          document.getElementById('reader').style.display = 'none';
+          document.getElementById('startCamBtn').style.display = 'block';
+        }).catch(() => {
+          document.getElementById('reader').style.display = 'none';
+          document.getElementById('startCamBtn').style.display = 'block';
+        });
+      }
+    }
+
+    function changeScreen(current, next) {
+      document.getElementById(current).classList.remove('active');
+      document.getElementById(next).classList.add('active');
+    }
+
+    function goToStep2() {
+      const bar = document.getElementById('barcodeInput').value.trim();
+      if (!bar) { alert('Введите или отсканируйте ШК!'); return; }
+      payload.barcode = bar;
+      stopScanner();
+      changeScreen('step1', 'step2');
+    }
+
+    function getSelectedCheckboxes(groupId) {
+      const boxes = document.querySelectorAll(`#${groupId} input:checked`);
+      return Array.from(boxes).map(cb => cb.value).join(', ');
+    }
+
+    function goToStep3() {
+      const selected = getSelectedCheckboxes('fromGroup');
+      if (!selected) { alert('Выберите хотя бы один адрес источника!'); return; }
+      payload.fromLocs = selected;
+      changeScreen('step2', 'step3');
+    }
+
+    function submitData() {
+      const selected = getSelectedCheckboxes('toGroup');
+      if (!selected) { alert('Выберите хотя бы один адрес размещения!'); return; }
+      payload.toLocs = selected;
+
+      document.getElementById('submitBtn').disabled = true;
+      document.getElementById('loadingText').style.display = 'block';
+
+      // Отправляем данные на наш сервер Google Sheets через современный метод fetch
+      fetch(GOOGLE_SCRIPT_URL, {
+        method: 'POST',
+        mode: 'no-cors', // Позволяет обойти защиту от перекрестных запросов
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      })
+      .then(() => {
+        // Из-за режима no-cors мы не можем прочитать точные цифры ответа напрямую в целях безопасности,
+        // поэтому выводим сообщение об успешном сохранении в таблицу.
+        document.getElementById('statToday').innerText = "Обновлено";
+        document.getElementById('statTotal').innerText = "В таблице";
+        
+        document.getElementById('submitBtn').disabled = false;
+        document.getElementById('loadingText').style.display = 'none';
+        changeScreen('step3', 'step4');
+      })
+      .catch(err => {
+        alert("Ошибка сети при сохранении: " + err);
+        document.getElementById('submitBtn').disabled = false;
+        document.getElementById('loadingText').style.display = 'none';
+      });
+    }
+
+    function resetForm() {
+      payload = { barcode: '', fromLocs: '', toLocs: '' };
+      document.getElementById('barcodeInput').value = '';
+      document.querySelectorAll('input[type="checkbox"]').forEach(cb => cb.checked = false);
+      changeScreen('step4', 'step1');
+    }
+  </script>
+</body>
+</html>
