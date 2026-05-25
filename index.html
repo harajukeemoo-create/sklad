@@ -4,8 +4,8 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Консолидация Сборок</title>
-  <!-- Подключаем библиотеку сканера -->
-  <script src="https://unpkg.com"></script>
+  <!-- Подключаем альтернативную ультра-легкую библиотеку для распознавания кодов из видео -->
+  <script src="https://jsdelivr.net"></script>
   <style>
     body { font-family: Arial, sans-serif; margin: 15px; background: #f4f6f9; color: #333; font-size: 16px; }
     .screen { display: none; background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
@@ -21,7 +21,9 @@
     .stats-box { background: #e8f0fe; padding: 15px; border-radius: 6px; margin: 15px 0; text-align: center; }
     .stats-val { font-size: 26px; font-weight: bold; color: #1a73e8; margin-top: 5px; }
     .loader { display: none; text-align: center; color: #666; margin-top: 10px; font-style: italic; }
-    #reader { width: 100%; max-width: 400px; margin: 10px auto; border-radius: 8px; overflow: hidden; display: none; background: #000; height: 250px; }
+    /* Контейнер для видеопотока */
+    #videoContainer { display: none; width: 100%; max-width: 400px; margin: 10px auto; position: relative; border-radius: 8px; overflow: hidden; background: #000; }
+    video { width: 100%; height: auto; display: block; }
   </style>
 </head>
 <body>
@@ -29,8 +31,13 @@
   <!-- ШАГ 1: Ввод/Сканирование ШК -->
   <div id="step1" class="screen active">
     <h3>Шаг 1: Сканирование заказа</h3>
-    <button id="startCamBtn" class="btn btn-orange" onclick="startScanner()">📷 Включить видео-сканер</button>
-    <div id="reader"></div>
+    <button id="startCamBtn" class="btn btn-orange" onclick="startCamera()">📷 Включить видео-сканер</button>
+    
+    <!-- Прямой элемент видео без скрытых оберток -->
+    <div id="videoContainer">
+      <video id="video" playsinline></video>
+    </div>
+    
     <input type="text" id="barcodeInput" placeholder="Или введите ШК вручную" autofocus>
     <button class="btn" onclick="goToStep2()">Далее</button>
   </div>
@@ -64,10 +71,6 @@
   <div id="step4" class="screen">
     <h3>Успешно сохранено!</h3>
     <div class="stats-box">
-      <div>Сэкономлено площади за сегодня:</div>
-      <div class="stats-val"><span id="statToday">Обновлено</span></div>
-    </div>
-    <div class="stats-box">
       <div>Статус:</div>
       <div class="stats-val" style="font-size: 18px; color: #34a853;">Данные улетели в таблицу!</div>
     </div>
@@ -75,53 +78,42 @@
   </div>
 
   <script>
-    // ⚠️ ВАЖНО: ЗАМЕНИТЕ ЭТУ ССЫЛКУ НА ВАШУ ИЗ GOOGLE APPS SCRIPT (как в прошлый раз)
+    // ⚠️ ВАЖНО: ЗАМЕНИТЕ ЭТУ ССЫЛКУ НА ВАШУ ИЗ GOOGLE APPS SCRIPT
     const GOOGLE_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbzu6k8g8nHbXK3S0hxA0Pgj15DMwChDUPTdN-RTaGRyF3Dq-sPA9EMBjSvHj2D9avk9Tg/exec";
 
     let payload = { barcode: '', fromLocs: '', toLocs: '' };
-    let html5QrcodeScanner = null;
+    let codeReader = null;
 
-    function startScanner() {
-      // Показываем блок для камеры
-      document.getElementById('reader').style.display = 'block';
+    function startCamera() {
+      document.getElementById('videoContainer').style.display = 'block';
       document.getElementById('startCamBtn').style.display = 'none';
 
-      // Инициализируем сканер напрямую в блоке reader
-      html5QrcodeScanner = new Html5Qrcode("reader");
-      
-      // Прямая команда: запустить ЗАДНЮЮ камеру (environment) БЕЗ предварительных опросов
-      html5QrcodeScanner.start(
-        { facingMode: "environment" }, 
-        { fps: 15, qrbox: { width: 280, height: 160 } },
-        onScanSuccess,
-        onScanError
-      ).catch(err => {
-        alert("Ошибка прямого доступа к камере: " + err + "\n\nПроверьте, что ссылка открыта в самом браузере Chrome/Safari, а не внутри мессенджера.");
-        stopScanner();
+      // Инициализируем библиотеку ZXing для чтения кодов
+      codeReader = new ZXing.BrowserMultiFormatReader();
+
+      // Запускаем видео напрямую со стандартными, максимально совместимыми настройками
+      codeReader.decodeFromVideoDevice(undefined, 'video', (result, err) => {
+        if (result) {
+          // Если код успешно прочитан
+          document.getElementById('barcodeInput').value = result.text;
+          stopCamera();
+          goToStep2();
+        }
+        if (err && !(err instanceof ZXing.NotFoundException)) {
+          console.error(err);
+        }
+      }).catch(err => {
+        alert("Ошибка прямого подключения: " + err);
+        stopCamera();
       });
     }
 
-    function onScanSuccess(decodedText) {
-      document.getElementById('barcodeInput').value = decodedText;
-      stopScanner();
-      goToStep2();
-    }
-
-    function onScanError(err) {
-      // Сюда сыплются технические промахи кадров, игнорируем их, чтобы не спамить ошибками
-      console.log(err);
-    }
-
-    function stopScanner() {
-      if (html5QrcodeScanner) {
-        html5QrcodeScanner.stop().then(() => {
-          document.getElementById('reader').style.display = 'none';
-          document.getElementById('startCamBtn').style.display = 'block';
-        }).catch(() => {
-          document.getElementById('reader').style.display = 'none';
-          document.getElementById('startCamBtn').style.display = 'block';
-        });
+    function stopCamera() {
+      if (codeReader) {
+        codeReader.reset(); // Полностью выключаем камеру и сбрасываем поток
       }
+      document.getElementById('videoContainer').style.display = 'none';
+      document.getElementById('startCamBtn').style.display = 'block';
     }
 
     function changeScreen(current, next) {
@@ -133,7 +125,7 @@
       const bar = document.getElementById('barcodeInput').value.trim();
       if (!bar) { alert('Введите или отсканируйте ШК!'); return; }
       payload.barcode = bar;
-      stopScanner();
+      stopCamera();
       changeScreen('step1', 'step2');
     }
 
